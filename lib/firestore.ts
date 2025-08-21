@@ -1,4 +1,4 @@
-import { db } from "./firebase"
+import { db, auth } from "./firebase"
 import {
 	collection,
 	getDocs,
@@ -44,6 +44,7 @@ export type ApiKey = {
 	key: string
 	project?: string
 	projectId?: string
+	userId?: string
 	status?: string
 	createdAt?: string
 	lastUsed?: string
@@ -107,6 +108,7 @@ function normalizeApiKey(data: any): ApiKey {
         key: data.key,
         project: data.project,
         projectId: data.projectId,
+        userId: data.userId,
         status: data.status,
         createdAt: toIso(data.createdAt),
         lastUsed: toIso(data.lastUsed),
@@ -174,9 +176,32 @@ export async function fetchMembers(projectId?: string): Promise<Member[]> {
 	return snapshot.docs.map((d) => normalizeMember({ id: d.id, ...(d.data() as any) }))
 }
 
-export async function fetchApiKeys(projectId?: string): Promise<ApiKey[]> {
+export async function fetchApiKeys(input?: { projectId?: string; userId?: string } | string): Promise<ApiKey[]> {
 	const base = collection(db, "apiKeys")
-	const q = projectId ? query(base, where("projectId", "==", projectId)) : base
+	let projectId: string | undefined
+	let userId: string | undefined
+
+	if (typeof input === "string") {
+		projectId = input
+	} else if (input) {
+		projectId = input.projectId
+		userId = input.userId
+	}
+
+	// Default to current authenticated user if available
+	if (!userId && typeof window !== "undefined") {
+		userId = auth.currentUser?.uid || undefined
+	}
+
+	let q: any = base
+	if (projectId && userId) {
+		q = query(base, where("projectId", "==", projectId), where("userId", "==", userId))
+	} else if (userId) {
+		q = query(base, where("userId", "==", userId))
+	} else if (projectId) {
+		q = query(base, where("projectId", "==", projectId))
+	}
+
 	const snapshot = await getDocs(q)
 	return snapshot.docs.map((d) => normalizeApiKey({ id: d.id, ...(d.data() as any) }))
 }
@@ -188,6 +213,7 @@ export async function createApiKey(input: {
     key: string
     project?: string
     projectId?: string
+    userId?: string
     environment?: string
     status?: string
     expiresAt?: string
@@ -206,6 +232,7 @@ export async function createApiKey(input: {
         key: input.key,
         project: input.project || "",
         projectId: input.projectId || "",
+        userId: input.userId || (typeof window !== "undefined" ? auth.currentUser?.uid || "" : ""),
         status: input.status || "active",
         createdAt: now,
         lastUsed: now,
