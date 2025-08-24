@@ -12,6 +12,7 @@ import {
     doc,
     updateDoc,
     Timestamp,
+    
 } from "firebase/firestore"
 
 export type Project = {
@@ -24,6 +25,7 @@ export type Project = {
 	status?: string
 	createdAt?: string
 	lastActivity?: string
+	ownerId?: string
 }
 
 export type Member = {
@@ -35,6 +37,7 @@ export type Member = {
 	joinedAt?: string
 	lastActive?: string
 	projects?: string[]
+	ownerId?: string
 }
 
 export type ApiKey = {
@@ -56,7 +59,6 @@ export type ApiKey = {
     docsUrl?: string
     monthlyLimit?: number
     monthlyCost?: number
-    rotationDays?: number
     tags?: string[]
 }
 
@@ -84,6 +86,7 @@ function normalizeProject(data: any): Project {
         status: data.status,
         createdAt: toIso(data.createdAt),
         lastActivity: toIso(data.lastActivity),
+        ownerId: data.ownerId,
     }
 }
 
@@ -97,6 +100,7 @@ function normalizeMember(data: any): Member {
         joinedAt: toIso(data.joinedAt),
         lastActive: toIso(data.lastActive),
         projects: Array.isArray(data.projects) ? data.projects : [],
+        ownerId: data.ownerId,
     }
 }
 
@@ -120,13 +124,17 @@ function normalizeApiKey(data: any): ApiKey {
         docsUrl: data.docsUrl,
         monthlyLimit: typeof data.monthlyLimit === "number" ? data.monthlyLimit : undefined,
         monthlyCost: typeof data.monthlyCost === "number" ? data.monthlyCost : undefined,
-        rotationDays: typeof data.rotationDays === "number" ? data.rotationDays : undefined,
         tags: Array.isArray(data.tags) ? data.tags : undefined,
     }
 }
 
 export async function fetchProjects(): Promise<Project[]> {
-	const snapshot = await getDocs(query(collection(db, "projects"), orderBy("name")))
+	const base = collection(db, "projects")
+	const currentUserId = typeof window !== "undefined" ? auth.currentUser?.uid : undefined
+	// If the user is not yet known on the client, avoid returning other users' data.
+	if (!currentUserId) return []
+	const q = query(base, where("ownerId", "==", currentUserId), orderBy("name"))
+	const snapshot = await getDocs(q)
 	return snapshot.docs.map((d) => normalizeProject({ id: d.id, ...(d.data() as any) }))
 }
 
@@ -141,6 +149,7 @@ export async function createProject(input: { name: string; description?: string;
         status: "active",
         createdAt: now,
         lastActivity: now,
+        ownerId: typeof window !== "undefined" ? auth.currentUser?.uid || "" : "",
     })
     return ref.id
 }
@@ -152,6 +161,19 @@ export async function getProject(id: string): Promise<Project | null> {
 }
 
 export async function deleteProject(id: string) {
+    // Cascade delete API keys that belong to this project for the current user
+    try {
+        const currentUserId = typeof window !== "undefined" ? auth.currentUser?.uid : undefined
+        const base = collection(db, "apiKeys")
+        let q: any = query(base, where("projectId", "==", id))
+        if (currentUserId) {
+            q = query(base, where("projectId", "==", id), where("userId", "==", currentUserId))
+        }
+        const snapshot = await getDocs(q)
+        await Promise.all(snapshot.docs.map((d) => deleteDoc(doc(db, "apiKeys", d.id))))
+    } catch (_) {
+        // Ignore cascading delete errors; primary delete still proceeds
+    }
     await deleteDoc(doc(db, "projects", id))
 }
 
@@ -171,7 +193,15 @@ export async function updateMemberRole(id: string, role: string) {
 
 export async function fetchMembers(projectId?: string): Promise<Member[]> {
 	const base = collection(db, "teamMembers")
-	const q = projectId ? query(base, where("projects", "array-contains", projectId)) : base
+	const currentUserId = typeof window !== "undefined" ? auth.currentUser?.uid : undefined
+	let q: any = base
+	if (projectId && currentUserId) {
+		q = query(base, where("projects", "array-contains", projectId), where("ownerId", "==", currentUserId))
+	} else if (currentUserId) {
+		q = query(base, where("ownerId", "==", currentUserId))
+	} else if (projectId) {
+		q = query(base, where("projects", "array-contains", projectId))
+	}
 	const snapshot = await getDocs(q)
 	return snapshot.docs.map((d) => normalizeMember({ id: d.id, ...(d.data() as any) }))
 }
@@ -221,7 +251,6 @@ export async function createApiKey(input: {
     docsUrl?: string
     monthlyLimit?: number
     monthlyCost?: number
-    rotationDays?: number
     tags?: string[]
 }) {
     const now = new Date().toISOString()
@@ -243,7 +272,6 @@ export async function createApiKey(input: {
         docsUrl: input.docsUrl || "",
         monthlyLimit: typeof input.monthlyLimit === "number" ? input.monthlyLimit : 0,
         monthlyCost: typeof input.monthlyCost === "number" ? input.monthlyCost : 0,
-        rotationDays: typeof input.rotationDays === "number" ? input.rotationDays : 90,
         tags: Array.isArray(input.tags) ? input.tags : [],
     })
     return ref.id
@@ -254,7 +282,11 @@ export async function deleteApiKey(id: string) {
 }
 
 export async function fetchMembersPreview(limitCount = 4): Promise<Member[]> {
-	const snapshot = await getDocs(query(collection(db, "teamMembers"), orderBy("name"), limit(limitCount)))
+	const base = collection(db, "teamMembers")
+	const currentUserId = typeof window !== "undefined" ? auth.currentUser?.uid : undefined
+	if (!currentUserId) return []
+	const q = query(base, where("ownerId", "==", currentUserId), orderBy("name"), limit(limitCount))
+	const snapshot = await getDocs(q)
 	return snapshot.docs.map((d) => normalizeMember({ id: d.id, ...(d.data() as any) }))
 }
 
@@ -268,6 +300,7 @@ export async function addMember(input: { name?: string; email: string; role: str
         joinedAt: now,
         lastActive: "just now",
         projects: input.projects || [],
+        ownerId: typeof window !== "undefined" ? auth.currentUser?.uid || "" : "",
     })
     return ref.id
 }

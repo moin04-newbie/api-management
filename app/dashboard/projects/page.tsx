@@ -1,282 +1,307 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState, useMemo } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
+import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import {
-  Plus,
-  Search,
-  FolderOpen,
-  Users,
-  Key,
-  MoreHorizontal,
-  Calendar,
-  Activity,
-  Settings,
-  Trash2,
-  UserPlus,
-} from "lucide-react"
-import Link from "next/link"
-import { fetchProjects, fetchMembersPreview, createProject, type Project, type Member } from "@/lib/firestore"
+import { Plus, Search, Filter, Calendar, Users, IndianRupee, Target, Clock, MoreHorizontal } from "lucide-react"
+import { useWorkspace, type Project } from "@/lib/workspace-context"
+import { useRouter } from "next/navigation"
+import { format } from "date-fns"
+
+const statusColors = {
+  planning: "bg-gray-100 text-gray-800",
+  active: "bg-green-100 text-green-800",
+  completed: "bg-blue-100 text-blue-800",
+  "on-hold": "bg-yellow-100 text-yellow-800",
+  cancelled: "bg-red-100 text-red-800"
+}
+
+const priorityColors = {
+  low: "bg-gray-100 text-gray-800",
+  medium: "bg-yellow-100 text-yellow-800",
+  high: "bg-orange-100 text-orange-800",
+  urgent: "bg-red-100 text-red-800"
+}
 
 export default function ProjectsPage() {
+  const router = useRouter()
+  const { 
+    projects, 
+    totalProjects, 
+    activeProjects, 
+    completedProjects,
+    addProject 
+  } = useWorkspace()
+  
   const [searchTerm, setSearchTerm] = useState("")
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
-  const [projects, setProjects] = useState<Project[]>([])
-  const [membersPreview, setMembersPreview] = useState<Member[]>([])
-  const [newProjectName, setNewProjectName] = useState("")
-  const [newProjectDesc, setNewProjectDesc] = useState("")
-  const [newProjectTeam, setNewProjectTeam] = useState("")
+  const [statusFilter, setStatusFilter] = useState<string>("all")
+  const [priorityFilter, setPriorityFilter] = useState<string>("all")
 
-  useEffect(() => {
-    let isMounted = true
-    Promise.all([fetchProjects(), fetchMembersPreview(8)]).then(([p, m]) => {
-      if (!isMounted) return
-      setProjects(p)
-      setMembersPreview(m)
+  const filteredProjects = useMemo(() => {
+    return projects.filter(project => {
+      const matchesSearch = project.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                           project.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                           project.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase()))
+      
+      const matchesStatus = statusFilter === "all" || project.status === statusFilter
+      const matchesPriority = priorityFilter === "all" || project.priority === priorityFilter
+      
+      return matchesSearch && matchesStatus && matchesPriority
     })
-    return () => {
-      isMounted = false
-    }
-  }, [])
+  }, [projects, searchTerm, statusFilter, priorityFilter])
 
-  const filteredProjects = projects.filter(
-    (project) =>
-      project.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (project.description || "").toLowerCase().includes(searchTerm.toLowerCase()),
-  )
-
-  async function handleCreateProject() {
-    if (!newProjectName.trim()) return
-    await createProject({ name: newProjectName.trim(), description: newProjectDesc.trim(), team: newProjectTeam.trim() })
-    const updated = await fetchProjects()
-    setProjects(updated)
-    setIsCreateDialogOpen(false)
-    setNewProjectName("")
-    setNewProjectDesc("")
-    setNewProjectTeam("")
+  const handleCreateProject = () => {
+    router.push("/dashboard/projects/new")
   }
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "active":
-        return "bg-green-100 text-green-800"
-      case "development":
-        return "bg-blue-100 text-blue-800"
-      case "inactive":
-        return "bg-gray-100 text-gray-800"
-      default:
-        return "bg-gray-100 text-gray-800"
-    }
+  const handleProjectClick = (projectId: string) => {
+    router.push(`/dashboard/projects/${projectId}`)
+  }
+
+  const getProgressColor = (progress: number) => {
+    if (progress >= 80) return "bg-green-500"
+    if (progress >= 60) return "bg-blue-500"
+    if (progress >= 40) return "bg-yellow-500"
+    return "bg-red-500"
   }
 
   return (
     <div className="px-4 sm:px-6 lg:px-8">
+      {/* Header */}
       <div className="mb-8">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-[#013C5A]">Projects</h1>
-            <p className="text-[#013C5A]/70 mt-2">Organize your API keys by project and manage team access</p>
+            <h1 className="text-3xl font-bold text-gray-900">Projects</h1>
+            <p className="text-gray-600 mt-1">Manage and track your workspace projects</p>
           </div>
-          <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="bg-[#013C5A] hover:bg-[#013C5A]/90 text-white">
-                <Plus className="h-4 w-4 mr-2" />
-                New Project
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-[425px]">
-              <DialogHeader>
-                <DialogTitle>Create New Project</DialogTitle>
-                <DialogDescription>
-                  Create a new project to organize your API keys and manage team access.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-4 py-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="name">Project Name</Label>
-                  <Input id="name" placeholder="e.g., My Project" value={newProjectName} onChange={(e) => setNewProjectName(e.target.value)} />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="description">Description</Label>
-                  <Textarea id="description" placeholder="Brief description of this project" value={newProjectDesc} onChange={(e) => setNewProjectDesc(e.target.value)} />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="team">Team</Label>
-                  <Input id="team" placeholder="e.g., Core Team" value={newProjectTeam} onChange={(e) => setNewProjectTeam(e.target.value)} />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button type="button" onClick={handleCreateProject} className="bg-[#013C5A] hover:bg-[#013C5A]/90 text-white">
-                  Create Project
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+          <Button
+            className="bg-blue-600 hover:bg-blue-700 text-white"
+            onClick={handleCreateProject}
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            New Project
+          </Button>
         </div>
       </div>
 
-      {/* Search */}
-      <Card className="border-[#013C5A]/10 mb-6">
-        <CardContent className="p-6">
-          <div className="relative">
-            <Search className="absolute left-3 top-3 h-4 w-4 text-[#013C5A]/50" />
-            <Input
-              placeholder="Search projects..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10 border-[#013C5A]/20 focus:border-[#013C5A]"
-            />
+      {/* Stats Overview */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <Card className="border border-gray-200">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Total Projects</p>
+                <p className="text-3xl font-bold text-gray-900">{totalProjects}</p>
+              </div>
+              <div className="p-2 rounded-lg bg-blue-50">
+                <Target className="h-5 w-5 text-blue-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border border-gray-200">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Active Projects</p>
+                <p className="text-3xl font-bold text-green-600">{activeProjects}</p>
+              </div>
+              <div className="p-2 rounded-lg bg-green-50">
+                <Clock className="h-5 w-5 text-green-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border border-gray-200">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Completed</p>
+                <p className="text-3xl font-bold text-blue-600">{completedProjects}</p>
+              </div>
+              <div className="p-2 rounded-lg bg-blue-50">
+                <Target className="h-5 w-5 text-blue-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border border-gray-200">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Success Rate</p>
+                <p className="text-3xl font-bold text-gray-900">
+                  {totalProjects > 0 ? Math.round((completedProjects / totalProjects) * 100) : 0}%
+                </p>
+              </div>
+              <div className="p-2 rounded-lg bg-purple-50">
+                <Target className="h-5 w-5 text-purple-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Filters and Search */}
+      <div className="mb-6">
+        <div className="flex flex-col sm:flex-row gap-4">
+          <div className="flex-1">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Input
+                placeholder="Search projects..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10"
+              />
+            </div>
           </div>
-        </CardContent>
-      </Card>
+          
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-40">
+              <Filter className="h-4 w-4 mr-2" />
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Status</SelectItem>
+              <SelectItem value="planning">Planning</SelectItem>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="completed">Completed</SelectItem>
+              <SelectItem value="on-hold">On Hold</SelectItem>
+              <SelectItem value="cancelled">Cancelled</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={priorityFilter} onValueChange={setPriorityFilter}>
+            <SelectTrigger className="w-40">
+              <Filter className="h-4 w-4 mr-2" />
+              <SelectValue placeholder="Priority" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Priority</SelectItem>
+              <SelectItem value="low">Low</SelectItem>
+              <SelectItem value="medium">Medium</SelectItem>
+              <SelectItem value="high">High</SelectItem>
+              <SelectItem value="urgent">Urgent</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+
 
       {/* Projects Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         {filteredProjects.map((project) => (
-          <Card key={project.id} className="border-[#013C5A]/10 hover:shadow-lg transition-shadow">
+          <Card 
+            key={project.id} 
+            className="border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all cursor-pointer"
+            onClick={() => handleProjectClick(project.id)}
+          >
             <CardHeader className="pb-3">
               <div className="flex items-start justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 bg-[#013C5A]/10 rounded-lg flex items-center justify-center">
-                    <FolderOpen className="h-5 w-5 text-[#013C5A]" />
-                  </div>
-                  <div>
-                    <CardTitle className="text-lg text-[#013C5A]">{project.name}</CardTitle>
-                    <Badge className={getStatusColor(project.status ?? "active")}>{project.status}</Badge>
-                  </div>
+                <div className="flex-1 min-w-0">
+                  <CardTitle className="text-lg text-gray-900 truncate">{project.name}</CardTitle>
+                  <CardDescription className="text-sm text-gray-600 line-clamp-2 mt-1">
+                    {project.description}
+                  </CardDescription>
                 </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm">
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem asChild>
-                      <Link href={`/dashboard/projects/${project.id}`} className="flex items-center w-full">
-                        <Settings className="mr-2 h-4 w-4" />
-                        Manage Project
-                      </Link>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem>
-                      <UserPlus className="mr-2 h-4 w-4" />
-                      Add Member
-                    </DropdownMenuItem>
-                    <DropdownMenuItem className="text-red-600">
-                      <Trash2 className="mr-2 h-4 w-4" />
-                      Delete Project
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
               </div>
             </CardHeader>
-            <CardContent>
-              <CardDescription className="mb-4">{project.description}</CardDescription>
+            
+            <CardContent className="space-y-4">
+              {/* Status and Priority */}
+              <div className="flex items-center gap-2">
+                <Badge className={statusColors[project.status]}>
+                  {project.status.charAt(0).toUpperCase() + project.status.slice(1)}
+                </Badge>
+                <Badge className={priorityColors[project.priority]}>
+                  {project.priority.charAt(0).toUpperCase() + project.priority.slice(1)}
+                </Badge>
+              </div>
 
-              <div className="grid grid-cols-3 gap-4 mb-4">
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-[#013C5A]">{project.apiKeys}</div>
-                  <div className="text-xs text-[#013C5A]/60 flex items-center justify-center">
-                    <Key className="h-3 w-3 mr-1" />
-                    API Keys
-                  </div>
+              {/* Progress Bar */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-600">Progress</span>
+                  <span className="font-medium">{project.progress}%</span>
                 </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-[#013C5A]">{project.members}</div>
-                  <div className="text-xs text-[#013C5A]/60 flex items-center justify-center">
-                    <Users className="h-3 w-3 mr-1" />
-                    Members
-                  </div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-[#013C5A]">{Math.floor(Math.random() * 100)}%</div>
-                  <div className="text-xs text-[#013C5A]/60 flex items-center justify-center">
-                    <Activity className="h-3 w-3 mr-1" />
-                    Active
-                  </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div 
+                    className={`h-2 rounded-full ${getProgressColor(project.progress)}`}
+                    style={{ width: `${project.progress}%` }}
+                  />
                 </div>
               </div>
 
-              {/* Team Members Preview */}
-              <div className="mb-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-[#013C5A]/70">Team Members</span>
-                  <span className="text-xs text-[#013C5A]/50">{project.members} total</span>
+              {/* Project Details */}
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className="flex items-center gap-2 text-gray-600">
+                  <Calendar className="h-4 w-4" />
+                  <span>Due {format(new Date(project.dueDate), 'MMM dd')}</span>
                 </div>
-                <div className="flex -space-x-2">
-                  {membersPreview.slice(0, Math.min(4, project.members || 0)).map((member) => (
-                    <Avatar key={member.id} className="w-8 h-8 border-2 border-white">
-                      <AvatarImage src={member.avatar || "/placeholder.svg"} />
-                      <AvatarFallback className="bg-[#013C5A] text-white text-xs">
-                        {member.name
-                          .split(" ")
-                          .map((n) => n[0])
-                          .join("")}
-                      </AvatarFallback>
-                    </Avatar>
-                  ))}
-                  {typeof project.members === "number" && project.members > 4 && (
-                    <div className="w-8 h-8 rounded-full bg-[#013C5A]/10 border-2 border-white flex items-center justify-center">
-                      <span className="text-xs text-[#013C5A] font-medium">+{project.members - 4}</span>
-                    </div>
-                  )}
+                <div className="flex items-center gap-2 text-gray-600">
+                  <Users className="h-4 w-4" />
+                  <span>{project.teamMembers.length} members</span>
+                </div>
+                                 <div className="flex items-center gap-2 text-gray-600">
+                   <IndianRupee className="h-4 w-4" />
+                   <span>₹{project.spentBudget.toLocaleString()}</span>
+                 </div> 
+                <div className="flex items-center gap-2 text-gray-600">
+                  <Target className="h-4 w-4" />
+                  <span>{project.milestones.length} milestones</span>
                 </div>
               </div>
 
-              <div className="flex items-center justify-between text-xs text-[#013C5A]/50">
-                <span className="flex items-center">
-                  <Calendar className="h-3 w-3 mr-1" />
-                  Created {project.createdAt}
-                </span>
-                <span>Last activity {project.lastActivity}</span>
-              </div>
-
-              <div className="mt-4">
-                <Link href={`/dashboard/projects/${project.id}`}>
-                  <Button className="w-full bg-[#013C5A] hover:bg-[#013C5A]/90 text-white">View Project</Button>
-                </Link>
+              {/* Tags */}
+              <div className="flex flex-wrap gap-1">
+                {project.tags.slice(0, 3).map((tag, index) => (
+                  <Badge key={index} variant="outline" className="text-xs">
+                    {tag}
+                  </Badge>
+                ))}
+                {project.tags.length > 3 && (
+                  <Badge variant="outline" className="text-xs">
+                    +{project.tags.length - 3}
+                  </Badge>
+                )}
               </div>
             </CardContent>
           </Card>
         ))}
       </div>
 
+      {/* Empty State */}
       {filteredProjects.length === 0 && (
-        <Card className="border-[#013C5A]/10">
-          <CardContent className="p-12 text-center">
-            <FolderOpen className="h-12 w-12 text-[#013C5A]/30 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-[#013C5A] mb-2">No projects found</h3>
-            <p className="text-[#013C5A]/70 mb-4">
-              {searchTerm ? "Try adjusting your search terms" : "Create your first project to organize your API keys"}
-            </p>
-            {!searchTerm && (
-              <Button
-                className="bg-[#013C5A] hover:bg-[#013C5A]/90 text-white"
-                onClick={() => setIsCreateDialogOpen(true)}
-              >
+        <div className="text-center py-12">
+          <div className="mx-auto h-12 w-12 text-gray-400">
+            <Target className="h-12 w-12" />
+          </div>
+          <h3 className="mt-2 text-sm font-medium text-gray-900">No projects found</h3>
+          <p className="mt-1 text-sm text-gray-500">
+            {searchTerm || statusFilter !== "all" || priorityFilter !== "all"
+              ? "Try adjusting your search or filters."
+              : "Get started by creating your first project."}
+          </p>
+          {!searchTerm && statusFilter === "all" && priorityFilter === "all" && (
+            <div className="mt-6">
+              <Button onClick={handleCreateProject}>
                 <Plus className="h-4 w-4 mr-2" />
-                Create Your First Project
+                New Project
               </Button>
-            )}
-          </CardContent>
-        </Card>
+            </div>
+          )}
+        </div>
       )}
     </div>
   )

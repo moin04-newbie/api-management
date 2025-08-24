@@ -32,24 +32,23 @@ import {
   Crown,
 } from "lucide-react"
 import { fetchMembers, addMember, type Member, deleteMember } from "@/lib/firestore"
+import { useWorkspace } from "@/lib/workspace-context"
 import Link from "next/link"
 
 export default function TeamPage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false)
-  const [members, setMembers] = useState<Member[]>([])
   const [inviteEmail, setInviteEmail] = useState("")
   const [inviteRole, setInviteRole] = useState("viewer")
-
-  useEffect(() => {
-    let isMounted = true
-    fetchMembers().then((m) => {
-      if (isMounted) setMembers(m)
-    })
-    return () => {
-      isMounted = false
-    }
-  }, [])
+  
+  const { 
+    teamMembers: members, 
+    totalMembers, 
+    activeMembers, 
+    pendingInvites,
+    refreshTeamMembers,
+    addActivity
+  } = useWorkspace()
 
   const filteredMembers = members.filter(
     (member) =>
@@ -61,8 +60,17 @@ export default function TeamPage() {
   async function handleInvite() {
     if (!inviteEmail.trim()) return
     await addMember({ email: inviteEmail.trim(), role: inviteRole })
-    const updated = await fetchMembers()
-    setMembers(updated)
+    
+    // Add activity for the invitation
+    addActivity({
+      type: 'team',
+      action: 'invite',
+      description: `Invited ${inviteEmail.trim()} as ${inviteRole}`,
+      user: 'Current User'
+    })
+    
+    // Refresh team members from shared context
+    await refreshTeamMembers()
     setIsInviteDialogOpen(false)
     setInviteEmail("")
     setInviteRole("viewer")
@@ -285,7 +293,20 @@ export default function TeamPage() {
                         Resend Invite
                       </DropdownMenuItem>
                       {member.role !== "Owner" && (
-                        <DropdownMenuItem className="text-red-600" onClick={async () => { await deleteMember(member.id); const updated = await fetchMembers(); setMembers(updated) }}>
+                        <DropdownMenuItem className="text-red-600" onClick={async () => { 
+                          await deleteMember(member.id)
+                          
+                          // Add activity for member removal
+                          addActivity({
+                            type: 'team',
+                            action: 'remove',
+                            description: `Removed ${member.name} from team`,
+                            user: 'Current User'
+                          })
+                          
+                          // Refresh team members from shared context
+                          await refreshTeamMembers()
+                        }}>
                           <UserMinus className="mr-2 h-4 w-4" />
                           Remove Member
                         </DropdownMenuItem>

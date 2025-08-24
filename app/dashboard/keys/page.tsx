@@ -24,7 +24,6 @@ import {
   Eye,
   EyeOff,
   Copy,
-  RotateCcw,
   Trash2,
   MoreHorizontal,
   Calendar,
@@ -32,10 +31,13 @@ import {
   Shield,
   AlertTriangle,
   CheckCircle,
+  RefreshCw,
 } from "lucide-react"
 
 import { fetchApiKeys, createApiKey, deleteApiKey, type ApiKey } from "@/lib/firestore"
 import { getPlan } from "@/lib/subscription"
+import { encryptApiKey, generateSecurePassphrase, decryptApiKey } from "@/lib/utils"
+import { useWorkspace } from "@/lib/workspace-context"
 
 export default function APIKeysPage() {
   const [searchTerm, setSearchTerm] = useState("")
@@ -43,8 +45,15 @@ export default function APIKeysPage() {
   const [filterEnvironment, setFilterEnvironment] = useState("all")
   const [visibleKeys, setVisibleKeys] = useState<string[]>([])
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
-  const [apiKeys, setApiKeys] = useState<ApiKey[]>([])
   const [plan, setPlan] = useState<"free" | "pro">("free")
+  
+  const { 
+    apiKeys, 
+    totalApiKeys, 
+    activeApiKeys,
+    refreshApiKeys,
+    addActivity
+  } = useWorkspace()
   // New API Key form state
   const [serviceName, setServiceName] = useState("")
   const [newName, setNewName] = useState("")
@@ -57,24 +66,63 @@ export default function APIKeysPage() {
   const [docsUrl, setDocsUrl] = useState("")
   const [monthlyLimit, setMonthlyLimit] = useState<string>("")
   const [monthlyCost, setMonthlyCost] = useState<string>("")
-  const [rotationDays, setRotationDays] = useState<string>("90")
+
   const [tags, setTags] = useState<string[]>([])
   const [tagEntry, setTagEntry] = useState("")
   const [newProject, setNewProject] = useState("")
+  // View key passphrase state
+  const [viewKeyPassphrase, setViewKeyPassphrase] = useState("")
+  const [showViewPassphrase, setShowViewPassphrase] = useState(false)
+  const [decryptedKeys, setDecryptedKeys] = useState<Record<string, string>>({})
+  const [isViewKeyDialogOpen, setIsViewKeyDialogOpen] = useState(false)
+  const [currentViewingKey, setCurrentViewingKey] = useState<ApiKey | null>(null)
+  // Encryption modal state
+  const [isEncryptionModalOpen, setIsEncryptionModalOpen] = useState(false)
+  const [encryptionPassphrase, setEncryptionPassphrase] = useState("")
+  const [showEncryptionPassphrase, setShowEncryptionPassphrase] = useState(false)
+  const [suggestedPassphrase, setSuggestedPassphrase] = useState("")
+  const [tempApiKeyData, setTempApiKeyData] = useState<any>(null)
 
   useEffect(() => {
-    let isMounted = true
-    fetchApiKeys().then((keys) => {
-      if (isMounted) setApiKeys(keys)
-    })
     setPlan(getPlan())
-    return () => {
-      isMounted = false
-    }
   }, [])
 
-  const toggleKeyVisibility = (keyId: string) => {
-    setVisibleKeys((prev) => (prev.includes(keyId) ? prev.filter((id) => id !== keyId) : [...prev, keyId]))
+  // Generate suggested passphrase when encryption modal opens
+  useEffect(() => {
+    if (isEncryptionModalOpen && !suggestedPassphrase) {
+      setSuggestedPassphrase(generateSecurePassphrase())
+    }
+  }, [isEncryptionModalOpen, suggestedPassphrase])
+
+  const toggleKeyVisibility = async (key: ApiKey) => {
+    if (visibleKeys.includes(key.id)) {
+      // Hide the key
+      setVisibleKeys((prev) => prev.filter((id) => id !== key.id))
+      setDecryptedKeys((prev) => {
+        const newKeys = { ...prev }
+        delete newKeys[key.id]
+        return newKeys
+      })
+    } else {
+      // Show the key - need passphrase
+      setCurrentViewingKey(key)
+      setIsViewKeyDialogOpen(true)
+    }
+  }
+
+  const handleViewKey = async () => {
+    if (!currentViewingKey || !viewKeyPassphrase.trim()) return
+    
+    try {
+      const decryptedKey = await decryptApiKey(currentViewingKey.key, viewKeyPassphrase.trim())
+      setDecryptedKeys((prev) => ({ ...prev, [currentViewingKey.id]: decryptedKey }))
+      setVisibleKeys((prev) => [...prev, currentViewingKey.id])
+      setIsViewKeyDialogOpen(false)
+      setViewKeyPassphrase("")
+      setShowViewPassphrase(false)
+    } catch (error) {
+      alert("Invalid passphrase. Please try again.")
+    }
   }
 
   const copyToClipboard = (text: string) => {
@@ -108,38 +156,85 @@ export default function APIKeysPage() {
 
   async function handleCreateKey() {
     if (!newName.trim() || !apiKeyValue.trim()) return
-    await createApiKey({
-      name: newName.trim(),
-      serviceName: serviceName.trim(),
-      description: newDesc.trim(),
+    
+    // Store the API key data temporarily and show encryption modal
+    setTempApiKeyData({
+        name: newName.trim(),
+        serviceName: serviceName.trim(),
+        description: newDesc.trim(),
       key: apiKeyValue.trim(),
-      project: newProject.trim(),
-      environment: newEnv,
-      status: newStatus,
-      website: website.trim(),
-      docsUrl: docsUrl.trim(),
-      monthlyLimit: monthlyLimit ? Number(monthlyLimit) : undefined,
-      monthlyCost: monthlyCost ? Number(monthlyCost) : undefined,
-      rotationDays: rotationDays ? Number(rotationDays) : undefined,
-      tags,
-    })
-    const updated = await fetchApiKeys()
-    setApiKeys(updated)
+        project: newProject.trim(),
+        environment: newEnv,
+        status: newStatus,
+        website: website.trim(),
+        docsUrl: docsUrl.trim(),
+        monthlyLimit: monthlyLimit ? Number(monthlyLimit) : undefined,
+        monthlyCost: monthlyCost ? Number(monthlyCost) : undefined,
+
+        tags,
+      })
+    
+    // Generate a suggested passphrase
+    setSuggestedPassphrase(generateSecurePassphrase())
+    
+    // Close the create dialog and open the encryption modal
     setIsCreateDialogOpen(false)
-    setServiceName("")
-    setNewName("")
-    setApiKeyValue("")
-    setNewEnv("development")
-    setNewStatus("active")
-    setNewDesc("")
-    setWebsite("")
-    setDocsUrl("")
-    setMonthlyLimit("")
-    setMonthlyCost("")
-    setRotationDays("90")
-    setTags([])
-    setTagEntry("")
-    setNewProject("")
+    setIsEncryptionModalOpen(true)
+  }
+
+  async function handleEncryptAndSave() {
+    if (!encryptionPassphrase.trim()) {
+      alert("Please enter a passphrase to encrypt your API key")
+      return
+    }
+    
+    if (!tempApiKeyData) return
+    
+    try {
+      const encryptedKey = await encryptApiKey(tempApiKeyData.key, encryptionPassphrase.trim())
+      
+      // Create the API key first
+      const apiKeyId = await createApiKey({
+        ...tempApiKeyData,
+        key: encryptedKey,
+      })
+      
+      // Add activity for API key creation
+      addActivity({
+        type: 'api',
+        action: 'create',
+        description: `Created new API key: ${tempApiKeyData.name}`,
+        user: 'Current User'
+      })
+      
+      // Refresh API keys from shared context
+      await refreshApiKeys()
+      
+      // Close encryption modal and reset all states
+      setIsEncryptionModalOpen(false)
+      setEncryptionPassphrase("")
+      setShowEncryptionPassphrase(false)
+      setSuggestedPassphrase("")
+      setTempApiKeyData(null)
+      
+      // Reset create dialog states
+      setServiceName("")
+      setNewName("")
+      setApiKeyValue("")
+      setNewEnv("development")
+      setNewStatus("active")
+      setNewDesc("")
+      setWebsite("")
+      setDocsUrl("")
+      setMonthlyLimit("")
+      setMonthlyCost("")
+
+      setTags([])
+      setTagEntry("")
+      setNewProject("")
+    } catch (error) {
+      alert("Failed to encrypt API key: " + error)
+    }
   }
 
   const getStatusColor = (status: string) => {
@@ -226,10 +321,10 @@ export default function APIKeysPage() {
                   <div className="bg-gray-50 rounded-lg p-3 mb-4">
                     <div className="flex items-center justify-between">
                       <code className="text-sm font-mono text-gray-900">
-                        {visibleKeys.includes(key.id) ? key.key : "••••••••••••••••"}
+                        {visibleKeys.includes(key.id) ? decryptedKeys[key.id] || "••••••••••••••••" : "••••••••••••••••"}
                       </code>
                       <div className="flex items-center space-x-2">
-                        <Button size="sm" variant="ghost" onClick={() => toggleKeyVisibility(key.id)}>
+                        <Button size="sm" variant="ghost" onClick={() => toggleKeyVisibility(key)}>
                           {visibleKeys.includes(key.id) ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                         </Button>
                         <Button size="sm" variant="ghost" onClick={() => copyToClipboard(key.key)}>
@@ -275,18 +370,23 @@ export default function APIKeysPage() {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem>
-                      <Eye className="mr-2 h-4 w-4" />
-                      View Details
-                    </DropdownMenuItem>
-                    <DropdownMenuItem>
-                      <RotateCcw className="mr-2 h-4 w-4" />
-                      Rotate Key
-                    </DropdownMenuItem>
-                    <DropdownMenuItem>
                       <Copy className="mr-2 h-4 w-4" />
                       Copy Key
                     </DropdownMenuItem>
-                    <DropdownMenuItem className="text-red-600" onClick={async () => { await deleteApiKey(key.id); const updated = await fetchApiKeys(); setApiKeys(updated) }}>
+                    <DropdownMenuItem className="text-red-600" onClick={async () => { 
+                      await deleteApiKey(key.id)
+                      
+                      // Add activity for API key deletion
+                      addActivity({
+                        type: 'api',
+                        action: 'delete',
+                        description: `Revoked API key: ${key.name}`,
+                        user: 'Current User'
+                      })
+                      
+                      // Refresh API keys from shared context
+                      await refreshApiKeys()
+                    }}>
                       <Trash2 className="mr-2 h-4 w-4" />
                       Revoke Key
                     </DropdownMenuItem>
@@ -340,7 +440,7 @@ export default function APIKeysPage() {
 
             <div className="rounded-md border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
               <div className="font-medium mb-1">Enhanced Security</div>
-              <p>Your API key will be encrypted locally using a passphrase you provide. This ensures maximum security — even if our database is compromised, your API keys remain protected. Your passphrase is never stored or transmitted.</p>
+              <p>Your API key will be encrypted locally using a passphrase in the next step. This ensures maximum security — even if our database is compromised, your API keys remain protected. Your passphrase is never stored or transmitted.</p>
             </div>
 
             {/* Row 1: Service + Key Name */}
@@ -378,8 +478,10 @@ export default function APIKeysPage() {
                   {showFormKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </Button>
               </div>
-              <p className="text-xs text-gray-500">Your API key will be encrypted with a passphrase before being stored</p>
+              <p className="text-xs text-gray-500">Your API key will be encrypted with the passphrase above before being stored</p>
             </div>
+
+
 
             {/* Row 3: Environment + Status */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -439,19 +541,7 @@ export default function APIKeysPage() {
                 <Label>Monthly Cost (Optional)</Label>
                 <Input type="number" placeholder="29.99" value={monthlyCost} onChange={(e) => setMonthlyCost(e.target.value)} />
               </div>
-              <div className="grid gap-2">
-                <Label>Rotation Interval (Days)</Label>
-                <Select value={rotationDays} onValueChange={setRotationDays}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="30">30 days</SelectItem>
-                    <SelectItem value="60">60 days</SelectItem>
-                    <SelectItem value="90">90 days</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+
             </div>
 
             {/* Tags */}
@@ -478,7 +568,182 @@ export default function APIKeysPage() {
           </div>
           <DialogFooter>
             <Button type="button" onClick={handleCreateKey} className="bg-blue-600 hover:bg-blue-700 text-white">
-              Store API Key
+              Create API Key
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View API Key Dialog */}
+      <Dialog open={isViewKeyDialogOpen} onOpenChange={setIsViewKeyDialogOpen}>
+        <DialogContent className="sm:max-w-[400px] max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Enter Passphrase to View Key</DialogTitle>
+            <DialogDescription>
+              To view the encrypted API key, please enter the passphrase you used to encrypt it.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-2">
+              <Label>Passphrase</Label>
+              <div className="relative">
+                <Input
+                  type={showViewPassphrase ? "text" : "password"}
+                  placeholder="Enter passphrase"
+                  value={viewKeyPassphrase}
+                  onChange={(e) => setViewKeyPassphrase(e.target.value)}
+                  className="pr-20"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-1 top-1/2 -translate-y-1/2"
+                  onClick={() => setShowViewPassphrase((v) => !v)}
+                  aria-label={showViewPassphrase ? "Hide passphrase" : "Show passphrase"}
+                >
+                  {showViewPassphrase ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={handleViewKey} className="bg-blue-600 hover:bg-blue-700 text-white">
+              View Key
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Encrypt API Key Dialog */}
+      <Dialog open={isEncryptionModalOpen} onOpenChange={setIsEncryptionModalOpen}>
+        <DialogContent className="sm:max-w-[600px] max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                <Shield className="h-6 w-6 text-blue-600" />
+              </div>
+              <div>
+                <DialogTitle className="text-2xl font-bold">Encrypt API Key</DialogTitle>
+                <DialogDescription className="text-base">
+                  Choose a strong passphrase to encrypt your API key locally. This passphrase is never stored by KeyHaven, so make sure to remember it or store it securely.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+          
+          <div className="space-y-6 py-4">
+            {/* Important Security Notice */}
+            <div className="rounded-lg border border-orange-200 bg-orange-50 p-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-orange-600 mt-0.5 flex-shrink-0" />
+                <div>
+                  <h4 className="font-semibold text-orange-900 mb-2">Important Security Notice</h4>
+                  <p className="text-sm text-orange-800">
+                    Your passphrase is used to encrypt your API key locally. It is <strong>not stored anywhere</strong> by KeyHaven. 
+                    If you forget this passphrase, your API key <strong>cannot be recovered</strong>. Please store it securely in a 
+                    password manager or other secure location.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Create Passphrase Section */}
+            <div className="space-y-3">
+              <h3 className="font-semibold text-gray-900">Create Passphrase</h3>
+              <div className="relative">
+                <Input
+                  type={showEncryptionPassphrase ? "text" : "password"}
+                  placeholder="Enter a strong passphrase"
+                  value={encryptionPassphrase}
+                  onChange={(e) => setEncryptionPassphrase(e.target.value)}
+                  className="pr-20"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-1 top-1/2 -translate-y-1/2"
+                  onClick={() => setShowEncryptionPassphrase((v) => !v)}
+                  aria-label={showEncryptionPassphrase ? "Hide passphrase" : "Show passphrase"}
+                >
+                  {showEncryptionPassphrase ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </div>
+              <p className="text-sm text-gray-600">
+                Minimum 8 characters. Use a mix of letters, numbers, and symbols for better security.
+              </p>
+            </div>
+
+            {/* Passphrase Suggestion Section */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold text-gray-900">Need a suggestion?</h3>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSuggestedPassphrase(generateSecurePassphrase())}
+                  className="flex items-center gap-2"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Generate
+                </Button>
+              </div>
+              <div className="rounded-lg border border-green-200 bg-green-50 p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-semibold text-green-900 text-sm">Suggested Passphrase:</p>
+                    <p className="text-green-800 font-mono text-sm mt-1">{suggestedPassphrase}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => copyToClipboard(suggestedPassphrase)}
+                      className="text-green-700 hover:text-green-800"
+                      disabled={!suggestedPassphrase}
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setEncryptionPassphrase(suggestedPassphrase)}
+                      className="bg-green-600 hover:bg-green-700 text-white border-green-600"
+                    >
+                      Use
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setIsEncryptionModalOpen(false)
+                setIsCreateDialogOpen(true)
+                setEncryptionPassphrase("")
+                setShowEncryptionPassphrase(false)
+                setSuggestedPassphrase("")
+                setTempApiKeyData(null)
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleEncryptAndSave}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+              disabled={!encryptionPassphrase.trim() || encryptionPassphrase.length < 8}
+            >
+              Encrypt & Save
             </Button>
           </DialogFooter>
         </DialogContent>

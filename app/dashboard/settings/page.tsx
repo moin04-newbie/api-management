@@ -5,13 +5,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { onAuthStateChanged, changePassword } from "@/lib/auth"
+import { onAuthStateChanged, changePassword, signOutUser } from "@/lib/auth"
 import { getPlan, setPlan } from "@/lib/subscription"
-import { Mail, Lock, Eye, EyeOff, Shield, Crown, Check } from "lucide-react"
+import { Mail, Lock, Eye, EyeOff, Shield, Crown, Check, LogOut } from "lucide-react"
+import { useRouter } from "next/navigation"
 
 type Tab = "account" | "billing"
 
 export default function SettingsPage() {
+  const router = useRouter()
   const [tab, setTab] = useState<Tab>("account")
   const [email, setEmail] = useState("")
   const [plan, setPlanState] = useState<"free" | "pro">("free")
@@ -27,6 +29,17 @@ export default function SettingsPage() {
     setPlanState(getPlan())
     return () => unsub()
   }, [])
+
+  const handleLogout = async () => {
+    try {
+      await signOutUser()
+      router.push("/") // Redirect to landing page
+    } catch (error) {
+      console.error("Logout error:", error)
+      // Still redirect even if there's an error
+      router.push("/")
+    }
+  }
 
   const updateEmail = async () => {
     alert("Email update requires re-authentication; implement with Firebase updateEmail().")
@@ -78,6 +91,18 @@ export default function SettingsPage() {
             >
               Billing
             </button>
+            
+            {/* Logout Button */}
+            <div className="pt-4 border-t border-gray-200">
+              <Button 
+                variant="outline" 
+                className="w-full text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+                onClick={handleLogout}
+              >
+                <LogOut className="h-4 w-4 mr-2" />
+                Log Out
+              </Button>
+            </div>
           </CardContent>
         </Card>
 
@@ -177,9 +202,9 @@ export default function SettingsPage() {
                   <div className="text-3xl font-bold">$0 <span className="text-base font-normal">/forever</span></div>
                   <ul className="mt-4 space-y-2 text-sm text-gray-700">
                     <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600"/> Up to 5 API keys</li>
-                    <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600"/> Automated key rotation</li>
+                    <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600"/> Advanced key management</li>
                     <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600"/> In-app notifications</li>
-                    <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600"/> Basic security monitoring</li>
+                    <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600"/> Enhanced security features</li>
                     <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600"/> HTTPS encryption</li>
                   </ul>
                   <div className="mt-6">
@@ -204,7 +229,7 @@ export default function SettingsPage() {
                     <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600"/> Up to 25 API keys</li>
                     <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600"/> Advanced analytics & reporting</li>
                     <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600"/> Email notifications & alerts</li>
-                    <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600"/> Advanced security monitoring</li>
+                    <li className="flex items-center gap-2"><Check className="h-4 w-4 text-green-600"/> Enterprise security features</li>
                   </ul>
                   <div className="mt-6">
                     {plan === "pro" ? (

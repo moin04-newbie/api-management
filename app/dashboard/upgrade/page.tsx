@@ -88,7 +88,7 @@ export default function UpgradePage() {
             <ul className="text-sm text-gray-700 space-y-2 mb-6">
               <li>• Unlimited API keys</li>
               <li>• Advanced analytics & charts</li>
-              <li>• Email notifications & rotation schedules</li>
+                              <li>• Email notifications & advanced security</li>
               <li>• Extended audit logs</li>
             </ul>
             {plan === "pro" ? (
